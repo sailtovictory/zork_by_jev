@@ -1,0 +1,7 @@
+bin/
+games/
+runs/
+.env
+.venv/
+__pycache__/
+memory.json

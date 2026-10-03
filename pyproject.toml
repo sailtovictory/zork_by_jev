@@ -1,0 +1,6 @@
+[project]
+name = "zork-agent"
+version = "0.1.0"
+description = "Autonomous Zork I agent: a language model proposes commands, Jev picks one"
+requires-python = ">=3.10"
+dependencies = ["anthropic>=1.11", "typesafe-sdk>=0.7.2"]
