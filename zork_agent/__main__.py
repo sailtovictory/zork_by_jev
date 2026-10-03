@@ -18,7 +18,7 @@ from zork_agent.candidates import TemplateProposer
 from zork_agent.frotz import Frotz
 from zork_agent.policy import JevPolicy, RandomPolicy
 from zork_agent.proposer import ReaderProposer
-from zork_agent.reader import HaikuReader, LocalReader
+from zork_agent.reader import LOCAL_MODEL, HaikuReader, LocalReader
 from zork_agent.state import WorldState
 from zork_agent.vocab import load_dictionary
 
@@ -26,6 +26,8 @@ ROOT = Path(__file__).resolve().parent.parent
 RUNS = ROOT / "runs"
 MEMORY = ROOT / "memory.json"
 REPLAY_DELAY = 2.5
+# Every game opens the same way, so the leaflet's welcome text is always on screen.
+OPENING = ["open mailbox", "read leaflet"]
 
 BOLD, DIM, GREEN, CYAN, YELLOW, RESET = "\033[1m", "\033[2m", "\033[32m", "\033[36m", "\033[33m", "\033[0m"
 WIDTH = 100
@@ -51,7 +53,9 @@ def show_turn(record: dict) -> None:
         bar = "#" * round(probability * 30)
         marker, colour = (">", GREEN) if name == record["action"] else (" ", DIM)
         print(f"{colour}  {marker} {name:<28} {probability:5.2f} {bar}{RESET}")
-    if not record.get("top"):
+    if record.get("scripted"):
+        print(f"{DIM}  (fixed opening move){RESET}")
+    elif not record.get("top"):
         print(f"{DIM}  ({record['candidates']} options){RESET}")
     print(f"\n{BOLD}{GREEN}> {record['action']}{RESET}\n")
     for paragraph in record["response"].splitlines():
@@ -79,9 +83,29 @@ def best_log() -> Path:
     return max(logs, key=rank)
 
 
-def replay(target: str, delay: float) -> None:
+def players(proposer: str, policy: str, model: str | None = None) -> str:
+    """Who is playing, in plain words: "Jev and Gemma"."""
+    chooser = "Jev" if policy == "jev" else "random choice"
+    if proposer == "templates":
+        return chooser
+    reader = "Claude Haiku" if proposer == "haiku" else (model or LOCAL_MODEL).split(":")[0].rstrip("0123456789.-").capitalize()
+    return f"{chooser} and {reader}"
+
+
+def wait_for_enter(who: str) -> None:
+    """Show the title line and hold until Enter is pressed, then clear the screen."""
+    input(f"{BOLD}An autonomous agent powered by {who} is about to play Zork I. Press Enter to continue...{RESET}")
+    print("\033[2J\033[H", end="", flush=True)
+
+
+def replay(target: str, delay: float, wait: bool) -> None:
     path = best_log() if target == "best" else Path(target)
     records = read_log(path)
+    if wait:
+        # Older logs do not record who played; their file names still carry the proposer and policy.
+        name = path.name
+        proposer = next((kind for kind in ("haiku", "templates") if f"-{kind}-" in name), "local")
+        wait_for_enter(records[0].get("players") or players(proposer, "random" if "-random" in name else "jev"))
     print(f"{DIM}Replaying {path.name}: {len(records)} turns, top score {max(r['score'] for r in records)}{RESET}\n")
     for record in records:
         show_turn(record)
@@ -102,6 +126,7 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=None, help="seconds to pause after each turn, for watching")
     parser.add_argument("--no-memory", action="store_true", help="neither read nor update lessons from past games")
     parser.add_argument("--learn", metavar="LOG", nargs="+", help="fold saved runs into memory.json and exit")
+    parser.add_argument("--wait", action="store_true", help="wait for Enter before the first turn, for screen recording")
     parser.add_argument("--replay", metavar="LOG", help="replay a saved run ('best' picks the highest score); no API calls")
     parser.add_argument("--dfrotz", type=Path, default=ROOT / "bin" / "dfrotz.exe")
     parser.add_argument("--story", type=Path, default=ROOT / "games" / "zork1.z3")
@@ -110,7 +135,7 @@ def main() -> None:
     os.system("")  # enables ANSI colours in the Windows console
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # notes may contain characters cp1252 lacks
     if args.replay:
-        replay(args.replay, REPLAY_DELAY if args.delay is None else args.delay)
+        replay(args.replay, REPLAY_DELAY if args.delay is None else args.delay, args.wait)
         return
 
     load_env(ROOT / ".env")
@@ -140,6 +165,13 @@ def main() -> None:
     records: list[dict] = []
     state.set_inventory(game.send("inventory"))
 
+    who = players(args.proposer, args.policy, getattr(reader, "name", None))
+    if args.wait:
+        if isinstance(reader, LocalReader):  # load the model now so the first turn is not a long pause on camera
+            print(f"{DIM}Loading {reader.name}...{RESET}", flush=True)
+            reader.parse("Reply with an empty list.", {}, memory.Lessons, max_tokens=64)
+        wait_for_enter(who)
+
     try:
         with log_path.open("w", encoding="utf-8") as log:
 
@@ -149,11 +181,14 @@ def main() -> None:
                 log.flush()
                 show_turn(record)
 
-            record_turn({"step": 0, "room": state.room, "score": state.score, "moves": state.moves, "response": state.description})
+            record_turn({"step": 0, "room": state.room, "score": state.score, "moves": state.moves, "response": state.description, "players": who})
             for step in range(1, args.steps + 1):
                 notes_before = list(state.notes)
-                options = proposer.propose(state)
-                action, info = policy.choose(state, options)
+                if step <= len(OPENING):
+                    options, action, info = {}, OPENING[step - 1], {"scripted": True}
+                else:
+                    options = proposer.propose(state)
+                    action, info = policy.choose(state, options)
                 state.update(action, game.send(action))
                 record_turn({
                     "step": step,

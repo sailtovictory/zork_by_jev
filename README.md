@@ -51,7 +51,7 @@ Copy `.env.example` to `.env` and fill in the keys. `.env` is ignored by git.
 uv run --no-project python -m zork_agent --greedy --steps 150 --delay 2
 ```
 
-Each turn prints Jev's top five options with their probabilities, the command chosen, the game's reply, and any new notes from the reader.
+Every game opens with `open mailbox` and `read leaflet`, so the welcome text is always shown; the models take over from the third turn. Each turn prints Jev's top five options with their probabilities, the command chosen, the game's reply, and any new notes from the reader.
 
 | Option | Meaning |
 |---|---|
@@ -61,6 +61,7 @@ Each turn prints Jev's top five options with their probabilities, the command ch
 | `--greedy` | Always take Jev's top choice. Without it, the command is sampled from Jev's probabilities, which plays noticeably worse. |
 | `--steps N` | Number of turns (default 200). |
 | `--delay SECONDS` | Pause after each turn, for watching. |
+| `--wait` | Show a title line and wait for Enter before the first turn, for screen recording. |
 | `--seed N` | Seed for the game's own randomness. |
 | `--no-memory` | Do not read or update `memory.json`. |
 
