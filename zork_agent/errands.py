@@ -118,7 +118,35 @@ def _run_experiment(state: WorldState) -> tuple[str, str] | None:
     return None
 
 
+STALLED_BEFORE_EXPLORING = 12  # turns with no new room and no points before the harness picks a destination
+
+
+def _explore(state: WorldState) -> tuple[str, str] | None:
+    """Nothing new for a while: walk to the nearest known room not yet visited this game.
+
+    Only along ways the player is equipped for: no dark rooms without a light source, no deadly
+    rooms without a weapon. Otherwise two unreachable targets could pull the player back and forth.
+    """
+    if state.stalled < STALLED_BEFORE_EXPLORING or state.dark:
+        return None
+    closed = set() if state.has_light_source else set(state.dark_rooms)
+    if not state.armed:
+        closed |= {room for room in state.deadly_rooms if state.enemies.get(base_name(room)) not in state.defeated}
+    routes: dict[str, list[str]] = {state.room: []}
+    queue = [state.room]
+    while queue:
+        room = queue.pop(0)
+        for action, destination in state.map.get(room, {}).items():
+            if destination in routes or destination in closed or "[" in destination:
+                continue
+            routes[destination] = [*routes[room], action]
+            if state.visits.get(destination, 0) == 0 and _usable(state, routes[destination][0]):
+                return routes[destination][0], f"nothing new lately: heading for {destination}, not yet visited this game"
+            queue.append(destination)
+    return None
+
+
 def forced_action(state: WorldState) -> tuple[str, str] | None:
     """The command to send without consulting the models, and why; None when the models should decide."""
     return (_fight(state) or _run_pending(state) or _manage_lantern(state) or _mark_maze_room(state) or _lighten_load(state)
-            or _deliver_treasure(state) or _run_experiment(state))
+            or _deliver_treasure(state) or _run_experiment(state) or _explore(state))

@@ -115,6 +115,8 @@ The Jev client reads `TYPESAFE_BASE_URL`, so a server that implements the same `
 
 **Errands.** Some jobs have one right next step, so the harness does them without asking the models. An item whose pick-up raised the score is a treasure: when one is carried and a route to the trophy case is known, the harness walks there and puts it in. In rooms that cannot be told apart (the maze), it drops a spare item and names the room after it.
 
+**Exploring.** When a dozen turns pass with no new room and no points, the harness walks to the nearest room on its map that it has not visited this game, along ways it is equipped for. With the map from earlier games this tours the known world, fighting the troll and lighting the lantern on the way.
+
 **Puzzles.** The reader flags things it cannot explain or get past, and these go into a per-room journal with what has been tried. When a room's puzzle has been noticed twice, the agent stops once to think: Claude Haiku, with reasoning on, is given only that room's text and history and asked for a hypothesis and a few experiments, which the harness then runs and records. It is told to work as a first-time player, but a model that has read the internet may still recall the game, so this is not a clean test of puzzle solving.
 
 **Memory.** `memory.json` carries knowledge from game to game: the puzzle journal, the exact map and dead ends as the harness observed them, dark and deadly rooms, known treasures and where they score, and up to 25 lessons written after each game from the transcript (what scored, what killed the player, what was needed where). Each turn the models see only the lessons about nearby rooms or carried items. Delete the file to start from scratch.
