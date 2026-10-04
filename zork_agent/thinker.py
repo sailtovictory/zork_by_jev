@@ -7,6 +7,7 @@ from zork_agent.state import WorldState, base_name
 
 MAX_THOUGHTS_PER_GAME = 6
 SEEN_BEFORE_THINKING = 2  # how often an obstacle must be noticed before it is worth stopping for
+STALLED_BEFORE_THINKING = 40  # turns with no new room and no points: only then is the player really stuck
 THINKING_BUDGET = 2000  # tokens of reasoning, where the model supports it
 
 SYSTEM = """You are helping a first-time player of a text adventure who is stuck in one room.
@@ -37,6 +38,7 @@ def should_think(state: WorldState) -> bool:
     return bool(
         puzzle
         and puzzle["seen"] >= SEEN_BEFORE_THINKING
+        and state.stalled >= STALLED_BEFORE_THINKING
         and not state.dark
         and not state.experiments
         and room not in state.thought_about

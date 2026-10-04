@@ -94,6 +94,7 @@ class WorldState:
     room_log: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # room -> recent (command, reply)
     experiments: list[tuple[str, str, str]] = field(default_factory=list)  # queued (room, command, hypothesis)
     thought_about: set[str] = field(default_factory=set)  # rooms already stopped and thought about this game
+    stalled: int = 0  # turns since the score rose or a room was entered for the first time this game
     idle: dict[str, int] = field(default_factory=dict)  # room -> commands since anything moved or scored there
     failed_takes: dict[tuple[str, str], int] = field(default_factory=dict)  # (room, action) -> takes that got nothing
     deposited: set[str] = field(default_factory=set)  # treasures put in the trophy case this game
@@ -242,6 +243,8 @@ class WorldState:
             self.visits[self.room] = self.visits.get(self.room, 0) + 1
             self.description = turn.text
             self.came_from = previous_room
+            if self.visits[self.room] == 1:
+                self.stalled = -1
             self.last_edge = (previous_room, action)
             self.dark = False
         else:
@@ -250,6 +253,7 @@ class WorldState:
             if action in DIRECTIONS:
                 self.blocked.add((previous_room, action))
         self._see_darkness(turn.text)
+        self.stalled = 0 if self.score > previous_score else self.stalled + 1
         verb = action.split(" ")[0]
         if verb == "take" and "Taken" not in turn.text:
             self.failed_takes[(previous_room, action)] = self.failed_takes.get((previous_room, action), 0) + 1
