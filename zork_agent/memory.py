@@ -25,6 +25,7 @@ Worth keeping:
 - what killed the player or lost points, and what to do instead
 - which items turned out to be needed where (a light source before a dark room, a weapon before a fight)
 - commands and areas that wasted many turns with nothing gained
+- limits the game revealed, such as a lamp running low: note the turn it happened and what it means for next time
 
 Do not record routes between rooms: the player keeps an exact map separately. A room name followed by a \
 number, such as "Forest (2)", is a different room from the one without it.
@@ -41,7 +42,7 @@ class Lessons(BaseModel):
 
 
 def load(path: Path) -> dict:
-    empty = {"attempts": 0, "lessons": [], "map": {}, "blocked": [], "signatures": {}, "dark_rooms": [], "deadly_rooms": [], "treasures": [], "trophy": {}, "ambiguous": [], "puzzles": {}}
+    empty = {"attempts": 0, "lessons": [], "map": {}, "blocked": [], "signatures": {}, "dark_rooms": [], "deadly_rooms": [], "treasures": [], "trophy": {}, "ambiguous": [], "puzzles": {}, "lit_rooms": []}
     return empty | json.loads(path.read_text(encoding="utf-8")) if path.exists() else empty
 
 
@@ -62,6 +63,7 @@ def recall(path: Path, state: WorldState) -> None:
     state.trophy = memory["trophy"]
     state.ambiguous = set(memory["ambiguous"])
     state.puzzles = memory["puzzles"]
+    state.lit_rooms |= set(memory["lit_rooms"])
 
 
 def save_world(path: Path, state: WorldState) -> None:
@@ -76,6 +78,7 @@ def save_world(path: Path, state: WorldState) -> None:
     memory["trophy"] = state.trophy
     memory["ambiguous"] = sorted(state.ambiguous)
     memory["puzzles"] = state.puzzles
+    memory["lit_rooms"] = sorted(room for room in state.lit_rooms if "[" not in room)
     memory["signatures"] = state.signatures
     memory["dark_rooms"] = sorted(state.dark_rooms)
     memory["deadly_rooms"] = sorted(state.deadly_rooms)

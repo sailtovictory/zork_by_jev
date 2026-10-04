@@ -38,7 +38,7 @@ UNMARKED = "unmarked"
 LESSON_RANGE = 2  # lessons about rooms within this many moves are shown
 # What a snapshot keeps even when the game is rolled back: knowledge of the world, not of the moment.
 KNOWLEDGE = ("map", "signatures", "dark_rooms", "deadly_rooms", "treasures", "trophy", "ambiguous", "fatal", "lessons",
-             "puzzles", "thought_about")
+             "puzzles", "thought_about", "lit_rooms")
 PRONOUNS = {"me", "myself", "self", "you", "it", "them", "all", "everyt"}
 INVENTORY_LINE = re.compile(r"(You are carrying|An? |Some |The )")
 
@@ -75,6 +75,9 @@ class WorldState:
     # rooms the game described as pitch black, where moving without light is fatal
     dark_rooms: set[str] = field(default_factory=set)
     dark: bool = False  # the player is in the dark right now
+    # rooms seen clearly without a lit lantern: they have their own light
+    lit_rooms: set[str] = field(default_factory=set)
+    light_failed: bool = False  # the lantern would not come on (dead battery)
     # rooms where something other than darkness killed the player
     deadly_rooms: set[str] = field(default_factory=set)
     turns_since_inventory: int = 0
@@ -248,6 +251,7 @@ class WorldState:
         self._apply(turn)
         self.description = turn.text
         self.visits[self.room] = 1
+        self.lit_rooms.add(self.room)
 
     def update(self, action: str, turn: Turn) -> None:
         previous_room, key, previous_score = self.room, self._key(action), self.score
@@ -283,6 +287,8 @@ class WorldState:
             if action in DIRECTIONS:
                 self.blocked.add((previous_room, action))
         self._see_darkness(turn.text)
+        if action == "turn on lantern" and "now on" not in turn.text and "already on" not in turn.text:
+            self.light_failed = True
         self.stalled = 0 if self.score > previous_score else self.stalled + 1
         verb = action.split(" ")[0]
         if verb == "take" and "Taken" not in turn.text:
@@ -341,6 +347,8 @@ class WorldState:
         if DARK in text and DEATH not in text:
             self.dark = True
             self.dark_rooms.add(self.room)
+        elif text.splitlines()[:1] == [base_name(self.room)] and not self.lit and DEATH not in text:
+            self.lit_rooms.add(self.room)  # described in full with no lantern burning
         elif "is now on" in text:
             self.dark = False
 

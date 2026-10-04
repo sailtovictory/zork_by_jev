@@ -4,6 +4,31 @@ from zork_agent.candidates import guarded_exits
 from zork_agent.state import LIGHT_SOURCES, UNMARKED, WEAPONS, WorldState, base_name
 
 
+LIGHT, DOUSE = "turn on lantern", "turn off lantern"
+
+
+def _next_to_the_dark(state: WorldState, room: str) -> bool:
+    return any(destination in state.dark_rooms for destination in state.map.get(room, {}).values())
+
+
+def _manage_lantern(state: WorldState) -> tuple[str, str] | None:
+    """The battery is finite: burn it only where it is needed.
+
+    Off once the player is two rooms clear of anything dark, in rooms known to have their own light;
+    on again before stepping next to a dark room. A room never seen before is handled by the darkness
+    rule, which lights the lantern as soon as the game says it is pitch black.
+    """
+    if not state.has_light_source or state.dark or state.light_failed:
+        return None
+    here_dark_adjacent = _next_to_the_dark(state, state.room)
+    if not state.lit and here_dark_adjacent:
+        return LIGHT, "a dark room is next door"
+    clear = state.room in state.lit_rooms and state.came_from in state.lit_rooms
+    if state.lit and clear and not here_dark_adjacent and not _next_to_the_dark(state, state.came_from):
+        return DOUSE, "saving the lantern battery: this room has its own light"
+    return None
+
+
 def _usable(state: WorldState, action: str) -> bool:
     return (state.room, action) not in state.forced_failures and (state.room, action) not in state.fatal and not state.reckless(action)
 
@@ -63,4 +88,5 @@ def _run_experiment(state: WorldState) -> tuple[str, str] | None:
 
 def forced_action(state: WorldState) -> tuple[str, str] | None:
     """The command to send without consulting the models, and why; None when the models should decide."""
-    return _mark_maze_room(state) or _lighten_load(state) or _deliver_treasure(state) or _run_experiment(state)
+    return (_manage_lantern(state) or _mark_maze_room(state) or _lighten_load(state)
+            or _deliver_treasure(state) or _run_experiment(state))

@@ -111,6 +111,8 @@ The Jev client reads `TYPESAFE_BASE_URL`, so a server that implements the same `
 
 **Staying alive.** When the game says it is pitch black, the only options offered are lighting the lantern or going back. Rooms found to be dark are closed until the lantern is lit; rooms where something killed the player are closed until a weapon is carried. The game is saved when the score rises, every 15 turns when safe, and before entering a room that has killed before; on death it is restored, keeping what the death taught.
 
+**The lantern.** Its battery is finite, so the harness turns it off once the player is two rooms clear of anything dark, in rooms it has seen clearly without it, and on again beside a dark room. The models are never offered commands that throw away the light, a treasure, or a weapon in a room that has killed before.
+
 **Errands.** Some jobs have one right next step, so the harness does them without asking the models. An item whose pick-up raised the score is a treasure: when one is carried and a route to the trophy case is known, the harness walks there and puts it in. In rooms that cannot be told apart (the maze), it drops a spare item and names the room after it.
 
 **Puzzles.** The reader flags things it cannot explain or get past, and these go into a per-room journal with what has been tried. When a room's puzzle has been noticed twice, the agent stops once to think: Claude Haiku, with reasoning on, is given only that room's text and history and asked for a hypothesis and a few experiments, which the harness then runs and records. It is told to work as a first-time player, but a model that has read the internet may still recall the game, so this is not a clean test of puzzle solving.
