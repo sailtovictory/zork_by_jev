@@ -311,6 +311,8 @@ class WorldState:
         else:
             self.tried.add(key)
             closed = CLOSED.search(turn.text)
+            if action in self.map.get(previous_room, {}) and not closed and "carrying" not in turn.text:
+                del self.map[previous_room][action]  # the map was wrong about this way out of this room
             if closed and action in self.map.get(previous_room, {}) and not self.pending:
                 self.pending = [(previous_room, f"open {closed.group(1)}", f"the {closed.group(1)} is closed"),
                                 (previous_room, action, "trying that way again")]

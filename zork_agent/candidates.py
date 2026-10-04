@@ -115,7 +115,9 @@ def finalize(state: WorldState, candidates: dict[str, str | None]) -> dict[str, 
         ways_out = movement(state)
         kept = {action: hint for action, hint in kept.items() if action in ways_out} or kept
     exits = movement(state)
-    kept = kept or {a: exits[a] for a in state.map.get(state.room, {}) if a not in into_dark} or {"look": None}
+    # Last resort: any known way out that has not just failed here, so the agent cannot repeat a dead end.
+    ways = {a: exits[a] for a in state.map.get(state.room, {}) if a not in into_dark and not state.was_tried(a)}
+    kept = kept or ways or {"look": None}
     return dict(list(kept.items())[:MAX_CANDIDATES])
 
 
