@@ -42,7 +42,7 @@ class Lessons(BaseModel):
 
 
 def load(path: Path) -> dict:
-    empty = {"attempts": 0, "lessons": [], "map": {}, "blocked": [], "signatures": {}, "dark_rooms": [], "deadly_rooms": [], "treasures": [], "trophy": {}, "ambiguous": [], "puzzles": {}, "lit_rooms": []}
+    empty = {"attempts": 0, "lessons": [], "map": {}, "blocked": [], "signatures": {}, "dark_rooms": [], "deadly_rooms": [], "treasures": [], "trophy": {}, "ambiguous": [], "puzzles": {}, "lit_rooms": [], "enemies": {}}
     return empty | json.loads(path.read_text(encoding="utf-8")) if path.exists() else empty
 
 
@@ -63,6 +63,7 @@ def recall(path: Path, state: WorldState) -> None:
     state.trophy = memory["trophy"]
     state.ambiguous = set(memory["ambiguous"])
     state.puzzles = memory["puzzles"]
+    state.enemies = memory["enemies"]
     state.lit_rooms |= set(memory["lit_rooms"])
 
 
@@ -78,6 +79,7 @@ def save_world(path: Path, state: WorldState) -> None:
     memory["trophy"] = state.trophy
     memory["ambiguous"] = sorted(state.ambiguous)
     memory["puzzles"] = state.puzzles
+    memory["enemies"] = state.enemies
     memory["lit_rooms"] = sorted(room for room in state.lit_rooms if "[" not in room)
     memory["signatures"] = state.signatures
     memory["dark_rooms"] = sorted(state.dark_rooms)

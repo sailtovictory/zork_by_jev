@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from zork_agent import memory, thinker
-from zork_agent.errands import DOUSE, LIGHT, forced_action
+from zork_agent.errands import forced_action, repeatable
 from zork_agent.candidates import TemplateProposer
 from zork_agent.frotz import Frotz
 from zork_agent.policy import JevPolicy, RandomPolicy
@@ -262,7 +262,7 @@ def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int, 
                     save_here(step - 1)  # about to walk into a room that has killed before
                 room_before = state.room
                 state.update(action, game.send(action))
-                if "forced" in info and state.room == room_before and action not in (LIGHT, DOUSE):
+                if "forced" in info and state.room == room_before and not repeatable(action):
                     state.forced_failures.add((room_before, action))  # done, or did not work: either way, not again
                     if "carrying" in state.last_response:
                         state.overloaded = (room_before, action)

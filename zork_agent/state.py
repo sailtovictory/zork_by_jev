@@ -29,7 +29,10 @@ PARTING_VERBS = {"drop", "throw", "give", "put"}
 # The game counts "inventory" as a move, which burns lantern battery, so it is only asked when the
 # list may have changed: not after plain movement or looking at things, unless the reply hints otherwise.
 PASSIVE_VERBS = {"examine", "read", "search", "listen", "smell", "wait"}
-INVENTORY_HINTS = ("thief", "stole", "robbed", "lantern", "lamp", "taken", DEATH)
+INVENTORY_HINTS = ("thief", "stole", "robbed", "lantern", "lamp", "taken", "don't have", DEATH)
+# What the game says when an enemy is finished, or was never there.
+DEFEAT_PHRASES = ("breathes his last", "carcass", " dies", "is dead", "black fog", "can't see any")
+MAX_FIGHT_ROUNDS = 30
 INVENTORY_INTERVAL = 20  # turns between checks when nothing suggests a change
 OPPOSITE = {"north": "south", "south": "north", "east": "west", "west": "east", "up": "down", "down": "up",
             "northeast": "southwest", "southwest": "northeast", "northwest": "southeast", "southeast": "northwest",
@@ -38,7 +41,7 @@ UNMARKED = "unmarked"
 LESSON_RANGE = 2  # lessons about rooms within this many moves are shown
 # What a snapshot keeps even when the game is rolled back: knowledge of the world, not of the moment.
 KNOWLEDGE = ("map", "signatures", "dark_rooms", "deadly_rooms", "treasures", "trophy", "ambiguous", "fatal", "lessons",
-             "puzzles", "thought_about", "lit_rooms")
+             "puzzles", "thought_about", "lit_rooms", "enemies")
 PRONOUNS = {"me", "myself", "self", "you", "it", "them", "all", "everyt"}
 INVENTORY_LINE = re.compile(r"(You are carrying|An? |Some |The )")
 
@@ -77,6 +80,9 @@ class WorldState:
     dark: bool = False  # the player is in the dark right now
     # rooms seen clearly without a lit lantern: they have their own light
     lit_rooms: set[str] = field(default_factory=set)
+    # room -> the creature that both blocks the way out and can be fought there
+    enemies: dict[str, str] = field(default_factory=dict)
+    defeated: set[str] = field(default_factory=set)  # enemies killed or gone, this game
     light_failed: bool = False  # the lantern would not come on (dead battery)
     # rooms where something other than darkness killed the player
     deadly_rooms: set[str] = field(default_factory=set)
@@ -186,6 +192,21 @@ class WorldState:
             or (nouns & WEAPONS and self.room in self.deadly_rooms)
         )
 
+    def _learn_enemy(self, room: str) -> None:
+        """A creature is an enemy to fight when it has been attacked here and has also blocked the way out."""
+        log = self.room_log.get(base_name(room), [])
+        targets = {words[1] for command, _ in log if len(words := command.split(" ")) > 1 and words[0] in COMBAT_VERBS}
+        blocked = " ".join(reply.lower() for command, reply in log if command in DIRECTIONS)
+        for target in targets:
+            if target in blocked:
+                self.enemies[base_name(room)] = target
+
+    def enemy_here(self) -> str | None:
+        """The enemy to fight in this room, if it is still present."""
+        enemy = self.enemies.get(base_name(self.room))
+        seen = f"{self.description}\n{self.last_response}".lower()
+        return enemy if enemy and enemy not in self.defeated and enemy in seen else None
+
     @property
     def in_a_fight(self) -> bool:
         return self.room in self.deadly_rooms or any(a.split(" ")[0] in COMBAT_VERBS for a, _ in self.history[-3:])
@@ -287,6 +308,11 @@ class WorldState:
             if action in DIRECTIONS:
                 self.blocked.add((previous_room, action))
         self._see_darkness(turn.text)
+        if action.split(" ")[0] in COMBAT_VERBS or (action in DIRECTIONS and not moved):
+            self._learn_enemy(previous_room)
+        enemy = self.enemies.get(base_name(previous_room))
+        if enemy and enemy in action and any(phrase in turn.text.lower() for phrase in DEFEAT_PHRASES):
+            self.defeated.add(enemy)
         if action == "turn on lantern" and "now on" not in turn.text and "already on" not in turn.text:
             self.light_failed = True
         self.stalled = 0 if self.score > previous_score else self.stalled + 1

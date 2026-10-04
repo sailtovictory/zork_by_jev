@@ -2,7 +2,7 @@
 
 import re
 
-from zork_agent.state import DIRECTIONS, OPPOSITE, WorldState
+from zork_agent.state import DIRECTIONS, OPPOSITE, WorldState, base_name
 from zork_agent.vocab import WORD_LENGTH
 
 MAX_CANDIDATES = 255  # Choice accepts at most 255 options
@@ -88,7 +88,9 @@ def guarded_exits(state: WorldState) -> tuple[set[str], dict[str, str | None]]:
     """
     exits = state.map.get(state.room, {})
     into_dark = set() if state.lit else {action for action, room in exits.items() if room in state.dark_rooms}
-    into_danger = set() if state.armed else {action for action, room in exits.items() if room in state.deadly_rooms}
+    # A deadly room is safe again once the enemy that made it deadly has been beaten this game.
+    deadly = {room for room in state.deadly_rooms if state.enemies.get(base_name(room)) not in state.defeated}
+    into_danger = set() if state.armed else {action for action, room in exits.items() if room in deadly}
     offer = {LIGHT: "needed before entering the dark room next door"} if into_dark and state.has_light_source else {}
     return into_dark | into_danger, offer
 

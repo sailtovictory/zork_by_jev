@@ -1,10 +1,27 @@
 """Things the harness does itself, without asking the models: jobs with one right next step."""
 
 from zork_agent.candidates import guarded_exits
-from zork_agent.state import LIGHT_SOURCES, UNMARKED, WEAPONS, WorldState, base_name
+from zork_agent.state import LIGHT_SOURCES, MAX_FIGHT_ROUNDS, UNMARKED, WEAPONS, WorldState, base_name
 
 
 LIGHT, DOUSE = "turn on lantern", "turn off lantern"
+
+
+def repeatable(action: str) -> bool:
+    """Forced commands that are meant to be used more than once in a room."""
+    return action in (LIGHT, DOUSE) or action.startswith("kill ")
+
+
+def _fight(state: WorldState) -> tuple[str, str] | None:
+    """Armed, with an enemy that blocks the way: keep attacking until it falls, so the room is safe afterwards."""
+    enemy = state.enemy_here()
+    weapon = next((item for item in ("sword", "knife", "axe", "stiletto") if item in state.inventory_nouns), None)
+    if not enemy or not weapon or state.dark:
+        return None
+    attack = f"kill {enemy} with {weapon}"
+    if state.uses.get((state.room, attack), 0) >= MAX_FIGHT_ROUNDS:
+        return None
+    return attack, f"finishing the fight with the {enemy}"
 
 
 def _next_to_the_dark(state: WorldState, room: str) -> bool:
@@ -88,5 +105,5 @@ def _run_experiment(state: WorldState) -> tuple[str, str] | None:
 
 def forced_action(state: WorldState) -> tuple[str, str] | None:
     """The command to send without consulting the models, and why; None when the models should decide."""
-    return (_manage_lantern(state) or _mark_maze_room(state) or _lighten_load(state)
+    return (_fight(state) or _manage_lantern(state) or _mark_maze_room(state) or _lighten_load(state)
             or _deliver_treasure(state) or _run_experiment(state))
