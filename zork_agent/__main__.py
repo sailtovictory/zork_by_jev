@@ -14,12 +14,13 @@ import time
 from pathlib import Path
 
 from zork_agent import memory
+from zork_agent.errands import forced_action
 from zork_agent.candidates import TemplateProposer
 from zork_agent.frotz import Frotz
 from zork_agent.policy import JevPolicy, RandomPolicy
 from zork_agent.proposer import ReaderProposer
 from zork_agent.reader import LOCAL_MODEL, HaikuReader, LocalReader
-from zork_agent.state import WorldState
+from zork_agent.state import DEATH, WorldState
 from zork_agent.vocab import load_dictionary
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +29,10 @@ MEMORY = ROOT / "memory.json"
 REPLAY_DELAY = 2.5
 # Every game opens the same way, so the leaflet's welcome text is always on screen.
 OPENING = ["open mailbox", "read leaflet"]
+SAVES = RUNS / "saves"
+SAVE_INTERVAL = 15  # turns between checkpoints when nothing else prompts one
+MAX_RESTORES = 12  # per game; after that a death stands
+MAX_RESTORES_PER_SAVE = 3  # dying this often from one checkpoint means the checkpoint itself is doomed
 
 BOLD, DIM, GREEN, CYAN, YELLOW, RESET = "\033[1m", "\033[2m", "\033[32m", "\033[36m", "\033[33m", "\033[0m"
 WIDTH = 100
@@ -53,8 +58,14 @@ def show_turn(record: dict) -> None:
         bar = "#" * round(probability * 30)
         marker, colour = (">", GREEN) if name == record["action"] else (" ", DIM)
         print(f"{colour}  {marker} {name:<28} {probability:5.2f} {bar}{RESET}")
+    if record.get("event"):  # a restore after death: not a turn the player took
+        print(f"{YELLOW}{BOLD}  ** {record['event']} **{RESET}")
+        print(f"\n{CYAN}[step {record['step']}] {record['room']} | score {record['score']} | moves {record['moves']}{RESET}", flush=True)
+        return
     if record.get("scripted"):
         print(f"{DIM}  (fixed opening move){RESET}")
+    elif record.get("forced"):
+        print(f"{DIM}  ({record['forced']}){RESET}")
     elif not record.get("top"):
         print(f"{DIM}  ({record['candidates']} options){RESET}")
     print(f"\n{BOLD}{GREEN}> {record['action']}{RESET}\n")
@@ -126,6 +137,14 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=None, help="seconds to pause after each turn, for watching")
     parser.add_argument("--no-memory", action="store_true", help="neither read nor update lessons from past games")
     parser.add_argument("--learn", metavar="LOG", nargs="+", help="fold saved runs into memory.json and exit")
+    parser.add_argument("--lesson-writer", choices=["auto", "haiku", "same"], default="auto",
+                        help="who writes the end-of-game lessons: Claude Haiku, or the same model that reads the game; "
+                             "auto uses Haiku when ANTHROPIC_API_KEY is set")
+    parser.add_argument("--until-death", action="store_true",
+                        help="end the game when the player dies (or at --steps); turns off restoring saves")
+    parser.add_argument("--no-saves", action="store_true", help="do not save the game and restore it after a death")
+    parser.add_argument("--hours", type=float, default=None,
+                        help="keep starting new games, each learning from the last, until this much time has passed")
     parser.add_argument("--wait", action="store_true", help="wait for Enter before the first turn, for screen recording")
     parser.add_argument("--replay", metavar="LOG", help="replay a saved run ('best' picks the highest score); no API calls")
     parser.add_argument("--dfrotz", type=Path, default=ROOT / "bin" / "dfrotz.exe")
@@ -140,13 +159,13 @@ def main() -> None:
 
     load_env(ROOT / ".env")
     reader = {"local": lambda: LocalReader(args.local_model), "haiku": HaikuReader, "templates": lambda: None}[args.proposer]()
+    use_haiku = args.lesson_writer == "haiku" or (args.lesson_writer == "auto" and os.environ.get("ANTHROPIC_API_KEY"))
+    writer = HaikuReader() if use_haiku and not isinstance(reader, HaikuReader) else reader
     if args.learn:
         for log in args.learn:
-            lessons = memory.reflect(MEMORY, read_log(Path(log)), reader)
+            lessons = memory.reflect(MEMORY, read_log(Path(log)), writer)
             print(f"{log}: memory now holds {len(lessons)} lessons")
         return
-    use_memory = not args.no_memory
-    reflecting = use_memory and reader is not None
     rng = random.Random(args.seed)
     if args.policy == "jev":
         policy = JevPolicy(rng, args.model, args.greedy, args.temperature)
@@ -154,14 +173,46 @@ def main() -> None:
         policy = RandomPolicy(rng)
     proposer = ReaderProposer(reader) if reader else TemplateProposer()
 
+    if args.hours is None:
+        play(args, reader, writer, policy, proposer, args.seed)
+        return
+
+    # Training: game after game, each starting from the memory the last one left.
+    deadline = time.time() + args.hours * 3600
+    number = 0
+    while time.time() < deadline:
+        number += 1
+        try:
+            result = play(args, reader, writer, policy, proposer, args.seed + number - 1)
+        except Exception as error:  # a dropped connection should not end an unattended run
+            print(f"Game {number} failed: {error!r}; retrying in 30 seconds", flush=True)
+            time.sleep(30)
+            continue
+        ending = "died" if result["died"] else "reached the turn limit"
+        ending += f", {result['deaths']} deaths, {result['restores']} restores"
+        recalled = result["recalled"]
+        print(f"=== Game {number}: started with {recalled['lessons']} lessons and {recalled['rooms_mapped']} rooms mapped; "
+              f"{result['turns']} turns, peak score {result['peak']}, final {result['score']}, "
+              f"{result['rooms']} rooms, {ending} ===", flush=True)
+
+
+def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int) -> dict:
+    """Play one game, save its log, update memory, and return a summary."""
+    use_memory = not args.no_memory
+    reflecting = use_memory and writer is not None
     RUNS.mkdir(exist_ok=True)
-    log_path = RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.proposer}-{args.policy}-seed{args.seed}.jsonl"
-    game = Frotz(args.dfrotz, args.story, seed=args.seed)
+    log_path = RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{args.proposer}-{args.policy}-seed{seed}.jsonl"
+    SAVES.mkdir(parents=True, exist_ok=True)
+    game = Frotz(args.dfrotz, args.story, seed=seed, saves=SAVES)
+    saving = not args.no_saves and not args.until_death
+    checkpoint: dict | None = None  # {"file", "step", "snapshot", "restores"}
+    restores = 0
     state = WorldState(load_dictionary(args.story))
     state.begin(game.read())
     game.send("verbose")  # full room descriptions on every visit, so same-named rooms can be told apart
     if use_memory:
         memory.recall(MEMORY, state)
+    recalled = {"lessons": len(state.lessons), "rooms_mapped": len(state.map), "dead_ends": len(state.blocked)}
     records: list[dict] = []
     state.set_inventory(game.send("inventory"))
 
@@ -172,6 +223,7 @@ def main() -> None:
             reader.parse("Reply with an empty list.", {}, memory.Lessons, max_tokens=64)
         wait_for_enter(who)
 
+    died = False
     try:
         with log_path.open("w", encoding="utf-8") as log:
 
@@ -181,15 +233,33 @@ def main() -> None:
                 log.flush()
                 show_turn(record)
 
-            record_turn({"step": 0, "room": state.room, "score": state.score, "moves": state.moves, "response": state.description, "players": who})
+            record_turn({"step": 0, "room": state.room, "score": state.score, "moves": state.moves, "response": state.description, "players": who, "memory_at_start": recalled})
+            def save_here(step: int) -> None:
+                nonlocal checkpoint
+                name = f"{log_path.stem}-{step}.qzl"
+                if game.save(name):
+                    if checkpoint:
+                        (SAVES / checkpoint["file"]).unlink(missing_ok=True)
+                    checkpoint = {"file": name, "step": step, "snapshot": state.snapshot(), "restores": 0}
+
             for step in range(1, args.steps + 1):
-                notes_before = list(state.notes)
+                notes_before, score_before = list(state.notes), state.score
+                options, info = {}, {}
                 if step <= len(OPENING):
-                    options, action, info = {}, OPENING[step - 1], {"scripted": True}
+                    action, info = OPENING[step - 1], {"scripted": True}
+                elif forced := forced_action(state):
+                    action, info = forced[0], {"forced": forced[1]}
                 else:
                     options = proposer.propose(state)
                     action, info = policy.choose(state, options)
+
+                safe = not state.dark and state.room not in state.deadly_rooms
+                if saving and safe and state.map.get(state.room, {}).get(action) in state.deadly_rooms:
+                    save_here(step - 1)  # about to walk into a room that has killed before
+                room_before = state.room
                 state.update(action, game.send(action))
+                if "forced" in info and state.room == room_before:
+                    state.forced_failures.add((room_before, action))  # done, or did not work: either way, not again
                 record_turn({
                     "step": step,
                     "room": state.room,
@@ -202,17 +272,48 @@ def main() -> None:
                     **info,
                 })
                 time.sleep(args.delay or 0)
-                if state.game_over or not game.alive:
+                died = DEATH in state.last_response
+                if state.game_over or not game.alive or (died and args.until_death):
                     break
-                state.set_inventory(game.send("inventory"))
+                if died:
+                    usable = checkpoint and restores < MAX_RESTORES and checkpoint["restores"] < MAX_RESTORES_PER_SAVE
+                    if saving and usable:
+                        restores += 1
+                        checkpoint["restores"] += 1
+                        game.restore(checkpoint["file"])
+                        state.roll_back(checkpoint["snapshot"], f"The player died in {room_before} after '{action}' "
+                                        f"and the game was restored to step {checkpoint['step']}. Do not repeat that.")
+                        record_turn({"step": step, "room": state.room, "score": state.score, "moves": state.moves,
+                                     "event": f"Died in {room_before}. Restored the save from step {checkpoint['step']}",
+                                     "response": ""})
+                        continue
+                    state.after_death()
+                if state.inventory_may_have_changed(action):
+                    state.set_inventory(game.send("inventory"))
+                safe = not state.dark and not died and state.room not in state.deadly_rooms
+                due = checkpoint is None or state.score > score_before or step - checkpoint["step"] >= SAVE_INTERVAL
+                if saving and safe and due:
+                    save_here(step)
     finally:
         game.close()
+        if checkpoint:
+            (SAVES / checkpoint["file"]).unlink(missing_ok=True)
         if use_memory:
             memory.save_world(MEMORY, state)
         if reflecting and len(records) > 1:
-            lessons = memory.reflect(MEMORY, records, reader)
+            lessons = memory.reflect(MEMORY, records, writer)
             print(f"{YELLOW}Memory updated: {len(lessons)} lessons in {MEMORY.name}{RESET}")
     print(f"Finished: score {state.score}, {len(state.visits)} rooms visited, log at {log_path}")
+    return {
+        "turns": len(records) - 1,
+        "score": state.score,
+        "peak": max(record["score"] for record in records),
+        "rooms": len(state.visits),
+        "died": died,
+        "deaths": state.deaths,
+        "restores": restores,
+        "recalled": recalled,
+    }
 
 
 if __name__ == "__main__":

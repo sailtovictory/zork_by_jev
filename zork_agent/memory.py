@@ -29,6 +29,8 @@ Worth keeping:
 Do not record routes between rooms: the player keeps an exact map separately. A room name followed by a \
 number, such as "Forest (2)", is a different room from the one without it.
 
+If the player followed a lesson and still died or lost points, that lesson is wrong: correct it or delete it. State a cause or a cure only when the game's own text in the transcript says so; do not guess at what would have helped.
+
 Never drop a lesson about a sequence that raised the score unless the new transcript contradicts it; \
 when the list is full, drop the least valuable lesson about wasted turns first. Merge lessons that say \
 the same thing. Record only what the transcripts show; do not add knowledge of Zork from anywhere else."""
@@ -39,7 +41,7 @@ class Lessons(BaseModel):
 
 
 def load(path: Path) -> dict:
-    empty = {"attempts": 0, "lessons": [], "map": {}, "blocked": [], "signatures": {}}
+    empty = {"attempts": 0, "lessons": [], "map": {}, "blocked": [], "signatures": {}, "dark_rooms": [], "deadly_rooms": [], "treasures": [], "trophy": {}, "ambiguous": []}
     return empty | json.loads(path.read_text(encoding="utf-8")) if path.exists() else empty
 
 
@@ -54,13 +56,27 @@ def recall(path: Path, state: WorldState) -> None:
     state.map = memory["map"]
     state.signatures = memory["signatures"]
     state.blocked = {(room, direction) for room, direction in memory["blocked"]}
+    state.dark_rooms = set(memory["dark_rooms"])
+    state.deadly_rooms = set(memory["deadly_rooms"])
+    state.treasures = set(memory["treasures"])
+    state.trophy = memory["trophy"]
+    state.ambiguous = set(memory["ambiguous"])
 
 
 def save_world(path: Path, state: WorldState) -> None:
     """Store the map as observed. A direction that led somewhere at any point is not a dead end."""
     memory = load(path)
-    memory["map"] = state.map
+    # Rooms told apart by dropped items are left out: the items land in different rooms every game.
+    memory["map"] = {
+        room: {action: destination for action, destination in exits.items() if "[" not in destination}
+        for room, exits in state.map.items() if "[" not in room
+    }
+    memory["treasures"] = sorted(state.treasures)
+    memory["trophy"] = state.trophy
+    memory["ambiguous"] = sorted(state.ambiguous)
     memory["signatures"] = state.signatures
+    memory["dark_rooms"] = sorted(state.dark_rooms)
+    memory["deadly_rooms"] = sorted(state.deadly_rooms)
     memory["blocked"] = sorted(pair for pair in state.blocked if pair[1] not in state.map.get(pair[0], {}))
     _save(path, memory)
 

@@ -20,13 +20,15 @@ class Turn:
 
 
 class Frotz:
-    def __init__(self, dfrotz: Path, story: Path, seed: int | None = None, timeout: float = 10.0):
-        args = [str(dfrotz), "-p", "-m", "-w", "250", "-h", "999"]
+    def __init__(self, dfrotz: Path, story: Path, seed: int | None = None, timeout: float = 10.0,
+                 saves: Path | None = None):
+        args = [str(dfrotz.resolve()), "-p", "-m", "-w", "250", "-h", "999"]
         if seed is not None:
             args += ["-s", str(seed)]
         self.timeout = timeout
         self.proc = subprocess.Popen(
-            [*args, str(story)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            [*args, str(story.resolve())], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cwd=saves,  # dfrotz mangles backslashes in save paths, so saves go by bare name in its own folder
         )
         self._chunks: queue.Queue[bytes] = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
@@ -56,6 +58,25 @@ class Frotz:
         self.proc.stdin.write(command.encode("latin-1", "replace") + b"\n")
         self.proc.stdin.flush()
         return self.read()
+
+    def _with_filename(self, command: str, name: str) -> Turn:
+        """Run save or restore, answering the game's request for a file name."""
+        self.proc.stdin.write(command.encode() + b"\n")
+        self.proc.stdin.flush()
+        asked, deadline = b"", time.monotonic() + self.timeout
+        while b"filename" not in asked and time.monotonic() < deadline:
+            try:
+                asked += self._chunks.get(timeout=0.05)
+            except queue.Empty:
+                pass
+        return self.send(name)
+
+    def save(self, name: str) -> bool:
+        """Save the game under a bare file name that does not exist yet."""
+        return "Ok." in self._with_filename("save", name).text
+
+    def restore(self, name: str) -> Turn:
+        return self._with_filename("restore", name)
 
     @staticmethod
     def _parse(raw: str) -> Turn:

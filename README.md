@@ -21,7 +21,7 @@ dfrotz ── stdout ──► Python harness
 
 ## Status
 
-Early and experimental. The best game so far scored 39 of 350 points; a typical 100-turn game reaches 35 points and 20–25 rooms. The agent gets into the house, through the trap door and past the troll, and explores the first underground rooms. It does not yet bring treasures back to the trophy case, which is where most of the points are.
+Early and experimental. The best game so far scored 50 of 350 points, in 60 turns. The agent gets into the house, puts the egg in the trophy case, lights the lantern, goes through the trap door, and explores the first underground rooms. Over 29 training games the map grew to 36 rooms. It has not yet beaten the game or come close.
 
 ## Requirements
 
@@ -64,6 +64,18 @@ Every game opens with `open mailbox` and `read leaflet`, so the welcome text is 
 | `--wait` | Show a title line and wait for Enter before the first turn, for screen recording. |
 | `--seed N` | Seed for the game's own randomness. |
 | `--no-memory` | Do not read or update `memory.json`. |
+| `--no-saves` | Do not save the game and restore it after a death. |
+| `--until-death` | End the game at the first death. Turns saving off. |
+| `--hours H` | Training: keep starting new games, each learning from the last, for this long. |
+| `--lesson-writer auto\|haiku\|same` | Who writes the end-of-game lessons. `auto` uses Claude Haiku when an Anthropic key is set, otherwise the reader. |
+
+### Training
+
+```
+uv run --no-project python -m zork_agent --greedy --steps 400 --hours 3 > runs\training.log
+```
+
+Plays game after game with no pauses. Each game loads the memory the last one left. One line per finished game starts with `=== Game`.
 
 ### Replaying a game
 
@@ -84,11 +96,15 @@ The Jev client reads `TYPESAFE_BASE_URL`, so a server that implements the same `
 
 **Candidates.** Jev cannot generate text; it chooses among options it is given. The reader proposes commands each turn, and the harness filters them against the parser's own dictionary, which it reads out of the story file: commands with unknown words, game-control commands (`save`, `quit`) and commands aimed at the player are dropped. Synonyms are merged (`get` → `take`, `go east` → `east`) so they do not split Jev's vote. Known exits and untried compass directions are added.
 
-**State.** After every command the harness asks the game for the inventory and reads the room, score and move count from the status line. Rooms that share a name ("Forest") are told apart by their descriptions.
+**State.** The harness reads the room, score and move count from the status line, and asks the game for the inventory when it may have changed (asking costs a game move, which drains the lantern). Rooms that share a name ("Forest") are told apart by their descriptions.
 
 **Avoiding loops.** Commands that failed are not offered again in the same room with the same inventory. A command that is not an exit can be used twice per room per game (eight times for combat). Exits into much-visited rooms give way to fresher ones, and when every exit is well trodden the agent rotates through them.
 
-**Memory.** `memory.json` carries two things from game to game: the exact map and dead ends as the harness observed them, and up to 25 lessons the reader writes after each game from the transcript (what scored, what killed the player, what was needed where). Delete the file to start from scratch.
+**Staying alive.** When the game says it is pitch black, the only options offered are lighting the lantern or going back. Rooms found to be dark are closed until the lantern is lit; rooms where something killed the player are closed until a weapon is carried. The game is saved when the score rises, every 15 turns when safe, and before entering a room that has killed before; on death it is restored, keeping what the death taught.
+
+**Errands.** Some jobs have one right next step, so the harness does them without asking the models. An item whose pick-up raised the score is a treasure: when one is carried and a route to the trophy case is known, the harness walks there and puts it in. In rooms that cannot be told apart (the maze), it drops a spare item and names the room after it.
+
+**Memory.** `memory.json` carries knowledge from game to game: the exact map and dead ends as the harness observed them, dark and deadly rooms, known treasures and where they score, and up to 25 lessons written after each game from the transcript (what scored, what killed the player, what was needed where). Each turn the models see only the lessons about nearby rooms or carried items. Delete the file to start from scratch.
 
 ## Comparing readers
 
@@ -109,11 +125,11 @@ Local timings are from an RTX 5080.
 
 ## Known limits
 
-- The agent often enters the cellar without the lantern and dies, even though memory holds a lesson telling it not to.
-- Dying is not handled: notes about where items were left go stale.
-- All maze rooms look alike, so the map cannot tell them apart.
-- Asking for the inventory every turn costs a game move, so the lantern battery drains about twice as fast as for a human player.
+- The troll still wins many fights, and the thief is not handled.
+- Maze marking has only been tested on simulated rooms, and there are only as many markers as spare items.
+- The harness only returns treasures along routes it has already walked; the trap door shuts behind the player, so the way back from the cellar has to be found first.
 - Readers sometimes propose commands for objects in other rooms.
+- Lessons written by a small local model can be wrong; Claude Haiku's have been more accurate.
 
 ## Layout
 
@@ -126,5 +142,6 @@ Local timings are from an RTX 5080.
 | `zork_agent/reader.py` | Haiku and Ollama backends |
 | `zork_agent/proposer.py` | Reader prompt and proposal handling |
 | `zork_agent/policy.py` | Jev and random policies |
-| `zork_agent/memory.py` | Map and lessons across games |
-| `zork_agent/__main__.py` | Command line, display, logging, replay |
+| `zork_agent/errands.py` | Treasure delivery and maze marking |
+| `zork_agent/memory.py` | Map, hazards, treasures and lessons across games |
+| `zork_agent/__main__.py` | Command line, play loop, saves, training, display, replay |

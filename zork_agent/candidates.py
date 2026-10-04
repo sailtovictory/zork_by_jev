@@ -2,7 +2,7 @@
 
 import re
 
-from zork_agent.state import DIRECTIONS, WorldState
+from zork_agent.state import DIRECTIONS, OPPOSITE, WorldState
 from zork_agent.vocab import WORD_LENGTH
 
 MAX_CANDIDATES = 255  # Choice accepts at most 255 options
@@ -61,6 +61,38 @@ def stale_exits(state: WorldState) -> set[str]:
     return {action for action in rank if rank[action] > min(rank.values())}
 
 
+LIGHT = "turn on lantern"
+
+
+def in_the_dark(state: WorldState) -> dict[str, str | None] | None:
+    """What to do when the game says it is pitch black: light the lantern, or else go back.
+
+    Moving around in the dark is how the player gets eaten by a grue, so nothing else is offered.
+    """
+    if state.has_light_source and not state.lit and not state.was_tried(LIGHT):
+        return {LIGHT: "it is pitch black; without light the player dies"}
+    exits = state.map.get(state.room, {})
+    back = [action for action, destination in exits.items() if destination == state.came_from]
+    last_action = state.history[-1][0] if state.history else ""
+    if not back and last_action in OPPOSITE:
+        back = [OPPOSITE[last_action]]
+    back = [action for action in back if not state.was_tried(action)]
+    return {action: "the way back out of the dark" for action in back} or None
+
+
+def guarded_exits(state: WorldState) -> tuple[set[str], dict[str, str | None]]:
+    """Exits to withhold for now, and what to offer instead.
+
+    Rooms known to be dark stay closed until the lantern is lit; rooms where something killed the
+    player stay closed until a weapon is carried.
+    """
+    exits = state.map.get(state.room, {})
+    into_dark = set() if state.lit else {action for action, room in exits.items() if room in state.dark_rooms}
+    into_danger = set() if state.armed else {action for action, room in exits.items() if room in state.deadly_rooms}
+    offer = {LIGHT: "needed before entering the dark room next door"} if into_dark and state.has_light_source else {}
+    return into_dark | into_danger, offer
+
+
 def parseable(state: WorldState, command: str) -> bool:
     """True for a game command (not save, quit and the like) made only of words in the game's dictionary."""
     words = re.findall(r"[a-z]+", command.lower())
@@ -71,10 +103,14 @@ def parseable(state: WorldState, command: str) -> bool:
 
 def finalize(state: WorldState, candidates: dict[str, str | None]) -> dict[str, str | None]:
     """Drop actions already tried here and stale exits; if nothing is left, fall back to the known ways out."""
-    stale = stale_exits(state)
+    if state.dark and (forced := in_the_dark(state)):
+        return forced
+    into_dark, light = guarded_exits(state)
+    stale = stale_exits(state) | into_dark
+    candidates = light | candidates
     kept = {action: hint for action, hint in candidates.items() if not state.was_tried(action) and action not in stale}
     exits = movement(state)
-    kept = kept or {action: exits[action] for action in state.map.get(state.room, {})} or {"look": None}
+    kept = kept or {a: exits[a] for a in state.map.get(state.room, {}) if a not in into_dark} or {"look": None}
     return dict(list(kept.items())[:MAX_CANDIDATES])
 
 
