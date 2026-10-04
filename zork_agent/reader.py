@@ -25,10 +25,13 @@ class HaikuReader:
         workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID")
         self.client = anthropic.Anthropic(default_headers={"anthropic-workspace-id": workspace} if workspace else None)
 
-    def parse(self, system: str, payload: dict, schema: type[BaseModel], max_tokens: int) -> BaseModel | None:
+    def parse(self, system: str, payload: dict, schema: type[BaseModel], max_tokens: int,
+              thinking_budget: int = 0) -> BaseModel | None:
+        thinking = {"thinking": {"type": "enabled", "budget_tokens": thinking_budget}} if thinking_budget else {}
         response = self.client.messages.parse(
             model=HAIKU_MODEL,
-            max_tokens=max_tokens,
+            max_tokens=max_tokens + thinking_budget,
+            **thinking,
             system=system,
             messages=[{"role": "user", "content": json.dumps(payload)}],
             output_format=schema,
@@ -47,7 +50,8 @@ class LocalReader:
         host = os.environ.get("OLLAMA_HOST", LOCAL_HOST)
         self.url = (host if host.startswith("http") else f"http://{host}").rstrip("/") + "/api/chat"
 
-    def parse(self, system: str, payload: dict, schema: type[BaseModel], max_tokens: int) -> BaseModel | None:
+    def parse(self, system: str, payload: dict, schema: type[BaseModel], max_tokens: int,
+              thinking_budget: int = 0) -> BaseModel | None:  # the budget only applies to models that reason
         body = {
             "model": self.name,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload)}],

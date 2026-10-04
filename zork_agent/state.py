@@ -14,6 +14,10 @@ DIRECTIONS = ["north", "south", "east", "west", "northeast", "northwest", "south
 INFO_VERBS = {"read", "examine"}
 # How often one command may be used in one room per game. Fights take several blows; little else needs repeating.
 MAX_REPEATS = 2
+ROOM_BUDGET = 12  # commands that neither move nor score before a room is given up on for now
+ROOM_LOG_LENGTH = 20
+MAX_PUZZLE_NOTES = 3
+MAX_PUZZLE_TRIES = 20
 MAX_COMBAT_REPEATS = 8
 COMBAT_VERBS = {"attack", "kill", "fight", "hit", "stab", "slay", "strike"}
 GAME_OVER = "restart the game from the beginning"
@@ -32,7 +36,8 @@ OPPOSITE = {"north": "south", "south": "north", "east": "west", "west": "east", 
 UNMARKED = "unmarked"
 LESSON_RANGE = 2  # lessons about rooms within this many moves are shown
 # What a snapshot keeps even when the game is rolled back: knowledge of the world, not of the moment.
-KNOWLEDGE = ("map", "signatures", "dark_rooms", "deadly_rooms", "treasures", "trophy", "ambiguous", "fatal", "lessons")
+KNOWLEDGE = ("map", "signatures", "dark_rooms", "deadly_rooms", "treasures", "trophy", "ambiguous", "fatal", "lessons",
+             "puzzles", "thought_about")
 PRONOUNS = {"me", "myself", "self", "you", "it", "them", "all", "everyt"}
 INVENTORY_LINE = re.compile(r"(You are carrying|An? |Some |The )")
 
@@ -84,6 +89,16 @@ class WorldState:
     fatal: set[tuple[str, str]] = field(default_factory=set)
     # (room, action) pairs the harness chose itself and that did not work
     forced_failures: set[tuple[str, str]] = field(default_factory=set)
+    # room -> {"notes": what seems stuck, "seen": times noticed, "tried": {command: reply}, "solved": [commands]}
+    puzzles: dict[str, dict] = field(default_factory=dict)
+    room_log: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # room -> recent (command, reply)
+    experiments: list[tuple[str, str, str]] = field(default_factory=list)  # queued (room, command, hypothesis)
+    thought_about: set[str] = field(default_factory=set)  # rooms already stopped and thought about this game
+    idle: dict[str, int] = field(default_factory=dict)  # room -> commands since anything moved or scored there
+    failed_takes: dict[tuple[str, str], int] = field(default_factory=dict)  # (room, action) -> takes that got nothing
+    deposited: set[str] = field(default_factory=set)  # treasures put in the trophy case this game
+    # a (room, action) the harness tried that failed because too much was being carried
+    overloaded: tuple[str, str] | None = None
     last_edge: tuple[str, str] | None = None  # the (room, action) that led to the current room
     deaths: int = 0
     # read/examine commands about carried items, already answered once
@@ -117,7 +132,8 @@ class WorldState:
     def inventory_may_have_changed(self, action: str) -> bool:
         """False after plain movement or looking at things, when the reply gives no hint of a change."""
         self.turns_since_inventory += 1
-        passive = action in self.map.get(self.came_from, {}) or action in DIRECTIONS or action.split(" ")[0] in PASSIVE_VERBS
+        verb = action.split(" ")[0]
+        passive = action in self.map.get(self.came_from, {}) or action in DIRECTIONS or verb in PASSIVE_VERBS | COMBAT_VERBS
         hinted = any(hint.lower() in self.last_response.lower() for hint in INVENTORY_HINTS)
         return not passive or hinted or self.turns_since_inventory >= INVENTORY_INTERVAL
 
@@ -136,8 +152,8 @@ class WorldState:
     def _worn_out(self, action: str) -> bool:
         """True once a command that is not an exit has been repeated in this room as often as allowed."""
         verb = action.split(" ")[0]
-        if verb == "take":  # never capped, so a drop/take cycle ends with the item in hand, not on the floor
-            return False
+        if verb == "take":  # successful takes are never capped, so a drop/take cycle ends with the item in hand
+            return self.failed_takes.get((self.room, action), 0) >= MAX_REPEATS
         limit = MAX_COMBAT_REPEATS if verb in COMBAT_VERBS else MAX_REPEATS
         return self.uses.get((self.room, action), 0) >= limit and action not in self.map.get(self.room, {})
 
@@ -147,6 +163,7 @@ class WorldState:
             or action in self.learned
             or (self.room, action) in self.blocked
             or (self.room, action) in self.fatal
+            or (action.startswith("take ") and bool(self.deposited & set(self.nouns(action))))
             or self._worn_out(action)
         )
 
@@ -175,6 +192,24 @@ class WorldState:
         del routes[self.room]
         return routes
 
+    def note_puzzle(self, description: str) -> None:
+        """Record something in this room that could not be explained or got past."""
+        puzzle = self.puzzles.setdefault(base_name(self.room), {"notes": [], "seen": 0, "tried": {}, "solved": []})
+        puzzle["seen"] += 1
+        if description not in puzzle["notes"]:
+            puzzle["notes"] = [*puzzle["notes"], description][-MAX_PUZZLE_NOTES:]
+
+    def record_experiment(self, room: str, command: str, reply: str, scored: bool) -> None:
+        puzzle = self.puzzles.setdefault(base_name(room), {"notes": [], "seen": 0, "tried": {}, "solved": []})
+        puzzle["tried"][command] = reply[:160]
+        puzzle["tried"] = dict(list(puzzle["tried"].items())[-MAX_PUZZLE_TRIES:])
+        if scored:
+            puzzle["solved"].append(command)
+
+    @property
+    def room_exhausted(self) -> bool:
+        return self.idle.get(self.room, 0) >= ROOM_BUDGET
+
     def add_notes(self, notes: list[str]) -> None:
         self.notes = [*self.notes, *(note for note in notes if note not in self.notes)][-MAX_NOTES:]
 
@@ -191,6 +226,9 @@ class WorldState:
         self._apply(turn)
         self.last_response = turn.text
         self.history = [*self.history, (action, turn.text)][-HISTORY_LENGTH:]
+        log = self.room_log.setdefault(base_name(previous_room), [])
+        log.append((action, turn.text[:300]))
+        del log[:-ROOM_LOG_LENGTH]
         # In the maze every room looks alike, so a fresh room heading also counts as a move.
         moved = self.room != previous_room or turn.text.splitlines()[:1] == [turn.room]
         if moved and not action.startswith("look"):
@@ -208,10 +246,13 @@ class WorldState:
             self.dark = False
         else:
             self.tried.add(key)
+            self.idle[self.room] = 0 if self.score > previous_score else self.idle.get(self.room, 0) + 1
             if action in DIRECTIONS:
                 self.blocked.add((previous_room, action))
         self._see_darkness(turn.text)
         verb = action.split(" ")[0]
+        if verb == "take" and "Taken" not in turn.text:
+            self.failed_takes[(previous_room, action)] = self.failed_takes.get((previous_room, action), 0) + 1
         if DEATH in turn.text:
             self.deaths += 1
             if "grue" not in turn.text:
@@ -222,6 +263,7 @@ class WorldState:
             self.treasures |= set(self.nouns(action))
         elif self.score > previous_score and verb == "put" and len(self.nouns(action)) > 1:
             self.trophy = {"room": previous_room, "container": self.nouns(action)[-1]}
+            self.deposited.add(self.nouns(action)[0])
         elif verb == "drop" and "Dropped" in turn.text and self.room.endswith(f"[{UNMARKED}]") and self.nouns(action):
             self._mark_room(self.nouns(action)[0])
 
@@ -269,8 +311,14 @@ class WorldState:
             self.dark = False
 
     def set_inventory(self, turn: Turn) -> None:
+        room = self.room
         self._apply(turn)
         self.turns_since_inventory = 0
+        if DEATH in turn.text:  # asking takes a game turn, and something used it to kill the player
+            self.last_response = f"{self.last_response}\n{turn.text}"
+            self.deaths += 1
+            if "grue" not in turn.text:
+                self.deadly_rooms.add(room)
         # Ambient messages (a song bird, the thief) can trail the listing; keep only the listing.
         lines = []
         for line in turn.text.splitlines():
@@ -333,6 +381,7 @@ class WorldState:
             "known_routes_from_here": self.routes(),
             "dark_rooms_needing_a_lit_lantern": sorted(self.dark_rooms),
             "rooms_where_the_player_was_killed_enter_only_with_a_weapon": sorted(self.deadly_rooms),
+            "unsolved_here": self.puzzles.get(base_name(self.room), {}),
             "treasures_found_so_far": sorted(self.treasures),
             "where_treasures_score": self.trophy,
             "rooms_visited_this_game": self.visits,

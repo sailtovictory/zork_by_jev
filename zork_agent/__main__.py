@@ -13,7 +13,7 @@ import textwrap
 import time
 from pathlib import Path
 
-from zork_agent import memory
+from zork_agent import memory, thinker
 from zork_agent.errands import forced_action
 from zork_agent.candidates import TemplateProposer
 from zork_agent.frotz import Frotz
@@ -183,12 +183,12 @@ def main() -> None:
     while time.time() < deadline:
         number += 1
         try:
-            result = play(args, reader, writer, policy, proposer, args.seed + number - 1)
+            result = play(args, reader, writer, policy, proposer, args.seed + number - 1, deadline)
         except Exception as error:  # a dropped connection should not end an unattended run
             print(f"Game {number} failed: {error!r}; retrying in 30 seconds", flush=True)
             time.sleep(30)
             continue
-        ending = "died" if result["died"] else "reached the turn limit"
+        ending = "died" if result["died"] else "reached the turn or time limit"
         ending += f", {result['deaths']} deaths, {result['restores']} restores"
         recalled = result["recalled"]
         print(f"=== Game {number}: started with {recalled['lessons']} lessons and {recalled['rooms_mapped']} rooms mapped; "
@@ -196,7 +196,7 @@ def main() -> None:
               f"{result['rooms']} rooms, {ending} ===", flush=True)
 
 
-def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int) -> dict:
+def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int, deadline: float | None = None) -> dict:
     """Play one game, save its log, update memory, and return a summary."""
     use_memory = not args.no_memory
     reflecting = use_memory and writer is not None
@@ -243,11 +243,15 @@ def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int) 
                     checkpoint = {"file": name, "step": step, "snapshot": state.snapshot(), "restores": 0}
 
             for step in range(1, args.steps + 1):
+                if deadline and time.time() > deadline:
+                    break  # out of time: stop here so the run ends when it was asked to
                 notes_before, score_before = list(state.notes), state.score
                 options, info = {}, {}
                 if step <= len(OPENING):
                     action, info = OPENING[step - 1], {"scripted": True}
-                elif forced := forced_action(state):
+                elif forced := forced_action(state) or (thinker.should_think(state) and (writer or reader)
+                                                        and thinker.think(state, writer or reader)
+                                                        and forced_action(state)):
                     action, info = forced[0], {"forced": forced[1]}
                 else:
                     options = proposer.propose(state)
@@ -260,7 +264,11 @@ def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int) 
                 state.update(action, game.send(action))
                 if "forced" in info and state.room == room_before:
                     state.forced_failures.add((room_before, action))  # done, or did not work: either way, not again
-                record_turn({
+                    if "carrying" in state.last_response:
+                        state.overloaded = (room_before, action)
+                if info.get("forced", "").startswith("trying an idea"):
+                    state.record_experiment(room_before, action, state.last_response, state.score > score_before)
+                record = {
                     "step": step,
                     "room": state.room,
                     "score": state.score,
@@ -270,9 +278,14 @@ def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int) 
                     "candidates": len(options),
                     "notes": [note for note in state.notes if note not in notes_before],
                     **info,
-                })
-                time.sleep(args.delay or 0)
+                }
                 died = DEATH in state.last_response
+                if not died and not state.game_over and state.inventory_may_have_changed(action):
+                    state.set_inventory(game.send("inventory"))
+                    died = DEATH in state.last_response  # killed during the turn the inventory check took
+                    record |= {"response": state.last_response, "room": state.room, "score": state.score}
+                record_turn(record)
+                time.sleep(args.delay or 0)
                 if state.game_over or not game.alive or (died and args.until_death):
                     break
                 if died:
@@ -288,7 +301,6 @@ def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int) 
                                      "response": ""})
                         continue
                     state.after_death()
-                if state.inventory_may_have_changed(action):
                     state.set_inventory(game.send("inventory"))
                 safe = not state.dark and not died and state.room not in state.deadly_rooms
                 due = checkpoint is None or state.score > score_before or step - checkpoint["step"] >= SAVE_INTERVAL

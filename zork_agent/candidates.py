@@ -109,6 +109,9 @@ def finalize(state: WorldState, candidates: dict[str, str | None]) -> dict[str, 
     stale = stale_exits(state) | into_dark
     candidates = light | candidates
     kept = {action: hint for action, hint in candidates.items() if not state.was_tried(action) and action not in stale}
+    if state.room_exhausted:  # enough fiddling here for now: only ways out are offered
+        ways_out = movement(state)
+        kept = {action: hint for action, hint in kept.items() if action in ways_out} or kept
     exits = movement(state)
     kept = kept or {a: exits[a] for a in state.map.get(state.room, {}) if a not in into_dark} or {"look": None}
     return dict(list(kept.items())[:MAX_CANDIDATES])

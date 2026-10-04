@@ -22,7 +22,7 @@ dfrotz ── stdout ──► Python harness
 
 ## Status
 
-Early and experimental. The best game so far scored 50 of 350 points, in 60 turns. The agent gets into the house, puts the egg in the trophy case, lights the lantern, goes through the trap door, and explores the first underground rooms. Over 29 training games the map grew to 36 rooms. It has not yet beaten the game or come close.
+Early and experimental. The best game so far scored 60 of 350 points, reached by turn 66. The agent gets into the house, puts the egg in the trophy case, lights the lantern, goes through the trap door, carries the painting back up the chimney to the case, gets past the troll and explores as far as the dam. It is now stuck on puzzles, such as the platinum bar in the Loud Room, and has not come close to finishing the game.
 
 ## Requirements
 
@@ -84,7 +84,7 @@ Every game opens with `open mailbox` and `read leaflet`, so the welcome text is 
 uv run --no-project python -m zork_agent --greedy --steps 400 --hours 3 > runs\training.log
 ```
 
-Plays game after game with no pauses. Each game loads the memory the last one left. One line per finished game starts with `=== Game`.
+Plays game after game with no pauses, stopping when the time is up even if a game is in progress. Each game loads the memory the last one left. One line per finished game starts with `=== Game`.
 
 ### Replaying a game
 
@@ -113,7 +113,9 @@ The Jev client reads `TYPESAFE_BASE_URL`, so a server that implements the same `
 
 **Errands.** Some jobs have one right next step, so the harness does them without asking the models. An item whose pick-up raised the score is a treasure: when one is carried and a route to the trophy case is known, the harness walks there and puts it in. In rooms that cannot be told apart (the maze), it drops a spare item and names the room after it.
 
-**Memory.** `memory.json` carries knowledge from game to game: the exact map and dead ends as the harness observed them, dark and deadly rooms, known treasures and where they score, and up to 25 lessons written after each game from the transcript (what scored, what killed the player, what was needed where). Each turn the models see only the lessons about nearby rooms or carried items. Delete the file to start from scratch.
+**Puzzles.** The reader flags things it cannot explain or get past, and these go into a per-room journal with what has been tried. When a room's puzzle has been noticed twice, the agent stops once to think: Claude Haiku, with reasoning on, is given only that room's text and history and asked for a hypothesis and a few experiments, which the harness then runs and records. It is told to work as a first-time player, but a model that has read the internet may still recall the game, so this is not a clean test of puzzle solving.
+
+**Memory.** `memory.json` carries knowledge from game to game: the puzzle journal, the exact map and dead ends as the harness observed them, dark and deadly rooms, known treasures and where they score, and up to 25 lessons written after each game from the transcript (what scored, what killed the player, what was needed where). Each turn the models see only the lessons about nearby rooms or carried items. Delete the file to start from scratch.
 
 ## Comparing readers
 
@@ -134,7 +136,8 @@ Local timings are from an RTX 5080.
 
 ## Known limits
 
-- The troll still wins many fights, and the thief is not handled.
+- The troll still wins some fights (the game is restored when it does), and the thief is not handled.
+- Puzzles that need a leap, such as a play on words, are unsolved.
 - Maze marking has only been tested on simulated rooms, and there are only as many markers as spare items.
 - The harness only returns treasures along routes it has already walked; the trap door shuts behind the player, so the way back from the cellar has to be found first.
 - Readers sometimes propose commands for objects in other rooms.
@@ -152,5 +155,6 @@ Local timings are from an RTX 5080.
 | `zork_agent/proposer.py` | Reader prompt and proposal handling |
 | `zork_agent/policy.py` | Jev and random policies |
 | `zork_agent/errands.py` | Treasure delivery and maze marking |
+| `zork_agent/thinker.py` | The stop-and-think step for puzzles |
 | `zork_agent/memory.py` | Map, hazards, treasures and lessons across games |
 | `zork_agent/__main__.py` | Command line, play loop, saves, training, display, replay |

@@ -15,6 +15,7 @@ known_routes_from_here gives the exact commands, in order, to reach each known r
 
 From the state you are given, return:
 - world_changed: true when the latest response changed the room or an object in it (a door or container opened, something was moved, a creature died or left), false when the command was refused, did nothing, or only gave information. Picking up or dropping an item does not count.
+- puzzle: one sentence when the latest response shows something in this room the player cannot yet explain or get past (the game repeats the player's words, a mechanism does nothing, an object cannot be taken or opened for no stated reason). Leave it empty for ordinary refusals such as a wrong direction or an unknown word, and when nothing is stuck.
 - notes: durable facts learned from the latest response that will matter later (a door that is locked, \
 an object that turned out to be a container, where an item was left, what killed the player). Return an empty \
 list when the latest response taught nothing new. Do not repeat notes already listed.
@@ -43,6 +44,7 @@ The parser has no "use" verb; name the specific action instead."""
 
 class Reading(BaseModel):
     world_changed: bool = Field(description="True when the latest response changed the room or an object in it")
+    puzzle: str = Field(description="One sentence on something here that cannot yet be explained or got past; empty if nothing")
     notes: list[str] = Field(description="New durable facts from the latest response; empty if none")
     commands: list[str] = Field(description="Candidate commands, most promising first")
 
@@ -70,6 +72,8 @@ class ReaderProposer:
             return self.fallback.propose(state)
         if reading.world_changed:
             state.world_changed()
+        if reading.puzzle.strip():
+            state.note_puzzle(reading.puzzle.strip())
         state.add_notes(reading.notes)
         proposed = {normalize(command): "suggested by the text reader" for command in reading.commands}
         # Words the parser does not know would only waste a turn.
