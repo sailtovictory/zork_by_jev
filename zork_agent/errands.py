@@ -9,7 +9,7 @@ LIGHT, DOUSE = "turn on lantern", "turn off lantern"
 
 def repeatable(action: str) -> bool:
     """Forced commands that are meant to be used more than once in a room."""
-    return action in (LIGHT, DOUSE) or action.startswith("kill ")
+    return action in (LIGHT, DOUSE) or action.startswith(("kill ", "put ", "open "))
 
 
 def _fight(state: WorldState) -> tuple[str, str] | None:
@@ -83,12 +83,27 @@ def _deliver_treasure(state: WorldState) -> tuple[str, str] | None:
     room, container = state.trophy["room"], state.trophy["container"]
     reason = f"taking the {carried[0]} to the {container} in the {room}"
     if state.room == room:
-        steps = [f"open {container}", *(f"put {item} in {container}" for item in carried)]
-        return next(((step, reason) for step in steps if _usable(state, step)), None)
+        # Counted, not remembered as done: a treasure that comes back out of the case has to go in again.
+        steps = [(f"open {container}", 1), *((f"put {item} in {container}", 3) for item in carried)]
+        return next(((step, reason) for step, limit in steps if state.uses.get((room, step), 0) < limit), None)
     route = state.routes().get(room)
     if not route or not _usable(state, route[0]) or route[0] in guarded_exits(state)[0]:
         return None
     return route[0], reason
+
+
+def _run_pending(state: WorldState) -> tuple[str, str] | None:
+    """Carry out what the harness lined up for this room, such as opening a closed way and going through."""
+    while state.pending and not state.dark:
+        room, command, reason = state.pending[0]
+        if room != state.room:
+            state.pending.clear()  # the player has moved on
+            return None
+        state.pending.pop(0)
+        guarded = command in guarded_exits(state)[0]  # never forced into the dark unlit or into danger unarmed
+        if state.uses.get((room, command), 0) < 4 and not state.reckless(command) and not guarded:
+            return command, reason
+    return None
 
 
 def _run_experiment(state: WorldState) -> tuple[str, str] | None:
@@ -105,5 +120,5 @@ def _run_experiment(state: WorldState) -> tuple[str, str] | None:
 
 def forced_action(state: WorldState) -> tuple[str, str] | None:
     """The command to send without consulting the models, and why; None when the models should decide."""
-    return (_fight(state) or _manage_lantern(state) or _mark_maze_room(state) or _lighten_load(state)
+    return (_fight(state) or _run_pending(state) or _manage_lantern(state) or _mark_maze_room(state) or _lighten_load(state)
             or _deliver_treasure(state) or _run_experiment(state))

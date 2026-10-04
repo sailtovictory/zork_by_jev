@@ -33,6 +33,8 @@ INVENTORY_HINTS = ("thief", "stole", "robbed", "lantern", "lamp", "taken", "don'
 # What the game says when an enemy is finished, or was never there.
 DEFEAT_PHRASES = ("breathes his last", "carcass", " dies", "is dead", "black fog", "can't see any")
 MAX_FIGHT_ROUNDS = 30
+CLOSED = re.compile(r"[Tt]he ([a-z ]+?) is closed")
+SWEEPING_TAKES = {"all", "everything", "treasure", "treasures", "valuables"}
 INVENTORY_INTERVAL = 20  # turns between checks when nothing suggests a change
 OPPOSITE = {"north": "south", "south": "north", "east": "west", "west": "east", "up": "down", "down": "up",
             "northeast": "southwest", "southwest": "northeast", "northwest": "southeast", "southeast": "northwest",
@@ -83,6 +85,8 @@ class WorldState:
     # room -> the creature that both blocks the way out and can be fought there
     enemies: dict[str, str] = field(default_factory=dict)
     defeated: set[str] = field(default_factory=set)  # enemies killed or gone, this game
+    # commands the harness has lined up for a room: (room, command, why)
+    pending: list[tuple[str, str, str]] = field(default_factory=list)
     light_failed: bool = False  # the lantern would not come on (dead battery)
     # rooms where something other than darkness killed the player
     deadly_rooms: set[str] = field(default_factory=set)
@@ -219,6 +223,8 @@ class WorldState:
             or (self.room, action) in self.blocked
             or (self.room, action) in self.fatal
             or (action.startswith("take ") and bool(self.deposited & set(self.nouns(action))))
+            or (action.startswith("take ") and bool(self.deposited) and self.room == self.trophy.get("room")
+                and bool(SWEEPING_TAKES & set(action.split(" "))))
             or self._worn_out(action)
         )
 
@@ -304,6 +310,10 @@ class WorldState:
             self.dark = False
         else:
             self.tried.add(key)
+            closed = CLOSED.search(turn.text)
+            if closed and action in self.map.get(previous_room, {}) and not self.pending:
+                self.pending = [(previous_room, f"open {closed.group(1)}", f"the {closed.group(1)} is closed"),
+                                (previous_room, action, "trying that way again")]
             self.idle[self.room] = 0 if self.score > previous_score else self.idle.get(self.room, 0) + 1
             if action in DIRECTIONS:
                 self.blocked.add((previous_room, action))
@@ -394,6 +404,7 @@ class WorldState:
                 break
             lines.append(line)
         self.inventory_text = "\n".join(lines)
+        self.deposited -= set(self.inventory_nouns)
 
     def _identify(self, name: str, text: str) -> str:
         """Name the room, adding a number when a different room has already used this name."""
