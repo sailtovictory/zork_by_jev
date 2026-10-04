@@ -40,6 +40,7 @@ def should_think(state: WorldState) -> bool:
         and puzzle["seen"] >= SEEN_BEFORE_THINKING
         and state.stalled >= STALLED_BEFORE_THINKING
         and not state.dark
+        and not state.in_a_fight  # a fight is no time to experiment
         and not state.experiments
         and room not in state.thought_about
         and len(state.thought_about) < MAX_THOUGHTS_PER_GAME

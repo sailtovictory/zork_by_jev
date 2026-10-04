@@ -5,14 +5,14 @@ from zork_agent.state import LIGHT_SOURCES, UNMARKED, WEAPONS, WorldState, base_
 
 
 def _usable(state: WorldState, action: str) -> bool:
-    return (state.room, action) not in state.forced_failures and (state.room, action) not in state.fatal
+    return (state.room, action) not in state.forced_failures and (state.room, action) not in state.fatal and not state.reckless(action)
 
 
 def _mark_maze_room(state: WorldState) -> tuple[str, str] | None:
     """In an unmarked look-alike room, drop something spare so the room can be recognised again."""
     if not state.room.endswith(f"[{UNMARKED}]") or state.dark:
         return None
-    keep = LIGHT_SOURCES | WEAPONS | state.treasures | {"light"}
+    keep = LIGHT_SOURCES | WEAPONS | state.treasure_words | {"light"}
     for item in state.inventory_nouns:
         if item not in keep and item not in state.markers and _usable(state, f"drop {item}"):
             return f"drop {item}", f"marking this {base_name(state.room)} room with the {item} so it can be told apart"
@@ -25,7 +25,7 @@ def _lighten_load(state: WorldState) -> tuple[str, str] | None:
         return None
     reason = "carrying too much for the way ahead"
     for item in state.inventory_nouns:
-        if item not in LIGHT_SOURCES | state.treasures | {"light"} and _usable(state, f"drop {item}"):
+        if item not in LIGHT_SOURCES | state.treasure_words | {"light"} and _usable(state, f"drop {item}"):
             return f"drop {item}", reason
     action = state.overloaded[1]
     state.overloaded = None

@@ -25,6 +25,7 @@ DEATH = "You have died"
 DARK = "pitch black"
 LIGHT_SOURCES = {"lantern", "lamp"}
 WEAPONS = {"sword", "knife", "axe", "stiletto"}
+PARTING_VERBS = {"drop", "throw", "give", "put"}
 # The game counts "inventory" as a move, which burns lantern battery, so it is only asked when the
 # list may have changed: not after plain movement or looking at things, unless the reply hints otherwise.
 PASSIVE_VERBS = {"examine", "read", "search", "listen", "smell", "wait"}
@@ -158,8 +159,37 @@ class WorldState:
         limit = MAX_COMBAT_REPEATS if verb in COMBAT_VERBS else MAX_REPEATS
         return self.uses.get((self.room, action), 0) >= limit and action not in self.map.get(self.room, {})
 
+    @property
+    def treasure_words(self) -> set[str]:
+        """Every word for a treasure: its known name plus the other nouns on its inventory line ("bag of coins")."""
+        words = set(self.treasures)
+        for line in self.inventory_text.splitlines():
+            nouns = set(self.nouns(line))
+            if nouns & self.treasures:
+                words |= nouns
+        return words
+
+    def reckless(self, action: str) -> bool:
+        """True for commands that throw away what keeps the player alive or what the game is played for."""
+        verb, nouns = action.split(" ")[0], set(self.nouns(action))
+        if action.startswith("turn off") or verb in ("extinguish", "douse"):
+            return bool(nouns & LIGHT_SOURCES)
+        if verb not in PARTING_VERBS:
+            return False
+        into_trophy = verb == "put" and self.trophy.get("container") in nouns
+        return bool(
+            nouns & (LIGHT_SOURCES | {"light"})
+            or (nouns & self.treasure_words and not into_trophy)
+            or (nouns & WEAPONS and self.room in self.deadly_rooms)
+        )
+
+    @property
+    def in_a_fight(self) -> bool:
+        return self.room in self.deadly_rooms or any(a.split(" ")[0] in COMBAT_VERBS for a, _ in self.history[-3:])
+
     def was_tried(self, action: str) -> bool:
         return (
+            self.reckless(action) or
             self._key(action) in self.tried
             or action in self.learned
             or (self.room, action) in self.blocked
