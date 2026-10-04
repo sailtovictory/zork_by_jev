@@ -11,7 +11,9 @@ ZORK1 = "https://github.com/historicalsource/zork1/raw/master/COMPILED/zork1.z3"
 
 
 def fetch(url: str) -> bytes:
-    with urllib.request.urlopen(url) as response:
+    # The IF Archive refuses urllib's default user agent.
+    request = urllib.request.Request(url, headers={"User-Agent": "zork-agent-setup"})
+    with urllib.request.urlopen(request) as response:
         return response.read()
 
 

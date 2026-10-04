@@ -1,6 +1,6 @@
 # Zork agent
 
-An autonomous agent that plays Zork I. A language model reads the game text and proposes commands; [Jev](https://typesafe.ai), a decision model that returns calibrated probabilities instead of text, picks one. A Python harness runs the game, tracks state, and remembers what it learned between games.
+An autonomous agent that plays Zork I. A language model (a local Gemma by default) reads the game text and proposes commands; [Jev](https://typesafe.ai), a decision model that returns calibrated probabilities instead of text, picks one. A Python harness runs the game, tracks state, and remembers what it learned between games.
 
 ```
 Zork I (zork1.z3)
@@ -13,6 +13,7 @@ dfrotz ── stdout ──► Python harness
    │                   ▼
    │              Reader (local Gemma, or Claude Haiku)
    │                   └─ proposes 8–15 commands, notes what changed
+   │                      (after each game, Claude Haiku writes the lessons)
    │                   ▼
    │              Jev ── picks one command
    │                   │
@@ -28,20 +29,28 @@ Early and experimental. The best game so far scored 50 of 350 points, in 60 turn
 - Windows (the setup script fetches a Windows build of dfrotz; on other systems install `dfrotz` yourself and pass `--dfrotz`)
 - Python 3.10+ and [uv](https://docs.astral.sh/uv/)
 - A Jev API key from TypeSafe AI
-- For the reader, one of:
-  - [Ollama](https://ollama.com) with `gemma4:12b` (about 8 GB; runs on a 16 GB GPU)
-  - an Anthropic API key, for Claude Haiku
+
+The default setup uses two more models, each with a different job:
+
+| Model | Job | Needs |
+|---|---|---|
+| Gemma (`gemma4:12b`), local | Reads the game text every turn and proposes commands | [Ollama](https://ollama.com) running, about 8 GB of download, a 16 GB GPU |
+| Claude Haiku | Writes the lessons at the end of each game | An Anthropic API key |
+
+Either can be left out. Without an Anthropic key, Gemma writes the lessons too. Without Ollama, run with `--proposer haiku` and Haiku does both jobs.
 
 ## Setup
 
 ```
+git clone https://github.com/sailtovictory/zork_by_jev.git
+cd zork_by_jev
 uv venv
 uv pip install -r pyproject.toml
 uv run --no-project python scripts/fetch_assets.py
 ollama pull gemma4:12b
 ```
 
-`fetch_assets.py` downloads `dfrotz.exe` from the IF Archive and `zork1.z3` from the [historicalsource/zork1](https://github.com/historicalsource/zork1) repository into `bin/` and `games/`.
+`fetch_assets.py` downloads `dfrotz.exe` from the IF Archive and `zork1.z3` from the [historicalsource/zork1](https://github.com/historicalsource/zork1) repository into `bin/` and `games/`. Skip `ollama pull` if you are using Haiku as the reader. Ollama must be running when you start a game with the local reader.
 
 Copy `.env.example` to `.env` and fill in the keys. `.env` is ignored by git.
 
