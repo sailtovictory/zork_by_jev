@@ -118,6 +118,7 @@ def _run_experiment(state: WorldState) -> tuple[str, str] | None:
     return None
 
 
+MAX_STEPS_TOWARD_A_ROOM = 25  # forced steps spent on one destination before giving up on it for this game
 STALLED_BEFORE_EXPLORING = 12  # turns with no new room and no points before the harness picks a destination
 
 
@@ -160,7 +161,10 @@ def _explore(state: WorldState) -> tuple[str, str] | None:
     if state.stalled < STALLED_BEFORE_EXPLORING or state.dark:
         return None
     for room, route in _reachable(state).items():  # nearest first
-        if route and state.visits.get(room, 0) == 0 and _usable(state, route[0]):
+        # A destination that keeps not being reached (a way that fails further along) is given up on.
+        tries = state.explore_attempts.get(room, 0)
+        if route and state.visits.get(room, 0) == 0 and _usable(state, route[0]) and tries < MAX_STEPS_TOWARD_A_ROOM:
+            state.explore_attempts[room] = tries + 1
             return route[0], f"nothing new lately: heading for {room}, not yet visited this game"
     return None
 

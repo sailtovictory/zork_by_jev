@@ -27,6 +27,8 @@ Worth keeping:
 - commands and areas that wasted many turns with nothing gained
 - limits the game revealed, such as a lamp running low: note the turn it happened and what it means for next time
 
+Every game starts from the beginning: the player carries nothing, the trophy case is empty, and every object is back where it started. Never write that something is already held, already deposited or already done; write what has to be done again each game.
+
 Do not record routes between rooms: the player keeps an exact map separately. A room name followed by a \
 number, such as "Forest (2)", is a different room from the one without it.
 

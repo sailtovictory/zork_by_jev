@@ -109,6 +109,7 @@ class WorldState:
     experiments: list[tuple[str, str, str]] = field(default_factory=list)  # queued (room, command, hypothesis)
     thought_about: set[str] = field(default_factory=set)  # rooms already stopped and thought about this game
     stalled: int = 0  # turns since the score rose or a room was entered for the first time this game
+    explore_attempts: dict[str, int] = field(default_factory=dict)  # room -> times the harness set out for it
     idle: dict[str, int] = field(default_factory=dict)  # room -> commands since anything moved or scored there
     failed_takes: dict[tuple[str, str], int] = field(default_factory=dict)  # (room, action) -> takes that got nothing
     deposited: set[str] = field(default_factory=set)  # treasures put in the trophy case this game
@@ -460,8 +461,10 @@ class WorldState:
             "known_routes_from_here": self.routes(),
             "dark_rooms_needing_a_lit_lantern": sorted(self.dark_rooms),
             "rooms_where_the_player_was_killed_enter_only_with_a_weapon": sorted(self.deadly_rooms),
-            "unsolved_here": self.puzzles.get(base_name(self.room), {}),
-            "treasures_found_so_far": sorted(self.treasures),
+            "this_game_starts_from_scratch": "Nothing carries over from earlier games. Every treasure is back in "
+                                             "its place and must be taken and deposited again this game.",
+            "treasures_worth_taking_when_seen": sorted(self.treasures),
+            "treasures_deposited_this_game": sorted(self.deposited),
             "where_treasures_score": self.trophy,
             "rooms_visited_this_game": self.visits,
             "notes": self.notes,
