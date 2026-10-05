@@ -264,7 +264,7 @@ def play(args: argparse.Namespace, reader, writer, policy, proposer, seed: int, 
                 state.update(action, game.send(action))
                 if "forced" in info and state.room == room_before and not repeatable(action):
                     state.forced_failures.add((room_before, action))  # done, or did not work: either way, not again
-                    if "carrying" in state.last_response:
+                    if "carrying" in state.last_response and state.uses.get((room_before, action), 0) < 4:
                         state.overloaded = (room_before, action)
                 if info.get("forced", "").startswith("trying an idea"):
                     state.record_experiment(room_before, action, state.last_response, state.score > score_before)

@@ -121,14 +121,8 @@ def _run_experiment(state: WorldState) -> tuple[str, str] | None:
 STALLED_BEFORE_EXPLORING = 12  # turns with no new room and no points before the harness picks a destination
 
 
-def _explore(state: WorldState) -> tuple[str, str] | None:
-    """Nothing new for a while: walk to the nearest known room not yet visited this game.
-
-    Only along ways the player is equipped for: no dark rooms without a light source, no deadly
-    rooms without a weapon. Otherwise two unreachable targets could pull the player back and forth.
-    """
-    if state.stalled < STALLED_BEFORE_EXPLORING or state.dark:
-        return None
+def _reachable(state: WorldState) -> dict[str, list[str]]:
+    """Routes to the rooms the player is equipped to reach: nothing dark without a light, nothing deadly unarmed."""
     closed = set() if state.has_light_source else set(state.dark_rooms)
     if not state.armed:
         closed |= {room for room in state.deadly_rooms if state.enemies.get(base_name(room)) not in state.defeated}
@@ -137,16 +131,41 @@ def _explore(state: WorldState) -> tuple[str, str] | None:
     while queue:
         room = queue.pop(0)
         for action, destination in state.map.get(room, {}).items():
-            if destination in routes or destination in closed or "[" in destination:
-                continue
-            routes[destination] = [*routes[room], action]
-            if state.visits.get(destination, 0) == 0 and _usable(state, routes[destination][0]):
-                return routes[destination][0], f"nothing new lately: heading for {destination}, not yet visited this game"
-            queue.append(destination)
+            if destination not in routes and destination not in closed and "[" not in destination:
+                routes[destination] = [*routes[room], action]
+                queue.append(destination)
+    return routes
+
+
+def _hunt(state: WorldState) -> tuple[str, str] | None:
+    """Armed, with a known enemy still standing: deal with it now, while the weapon is in hand.
+
+    Later errands may mean putting the weapon down, and an enemy left alive makes its room a
+    barrier for the rest of the game.
+    """
+    if not state.armed or state.dark or not state.has_light_source:
+        return None
+    routes = _reachable(state)
+    for room, enemy in state.enemies.items():
+        route = routes.get(room)
+        if enemy in state.defeated or not route:
+            continue
+        if state.uses.get((state.room, route[0]), 0) < 4 and (state.room, route[0]) not in state.fatal:
+            return route[0], f"armed: going to deal with the {enemy} in {room}"
+    return None
+
+
+def _explore(state: WorldState) -> tuple[str, str] | None:
+    """Nothing new for a while: walk to the nearest known room not yet visited this game."""
+    if state.stalled < STALLED_BEFORE_EXPLORING or state.dark:
+        return None
+    for room, route in _reachable(state).items():  # nearest first
+        if route and state.visits.get(room, 0) == 0 and _usable(state, route[0]):
+            return route[0], f"nothing new lately: heading for {room}, not yet visited this game"
     return None
 
 
 def forced_action(state: WorldState) -> tuple[str, str] | None:
     """The command to send without consulting the models, and why; None when the models should decide."""
     return (_fight(state) or _run_pending(state) or _manage_lantern(state) or _mark_maze_room(state) or _lighten_load(state)
-            or _deliver_treasure(state) or _run_experiment(state) or _explore(state))
+            or _hunt(state) or _deliver_treasure(state) or _run_experiment(state) or _explore(state))
